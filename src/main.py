@@ -1,6 +1,4 @@
 import os
-import threading
-from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
@@ -11,76 +9,93 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 REMOVE = ReplyKeyboardRemove()
 
-# Main menu
-def main_menu(lang: str):
-    if 'ru' in lang.lower():
+def get_lang(user):
+    code = user.language_code or 'ro'
+    return 'ru' if code.lower().startswith('ru') else 'ro'
+
+# Store language once at start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_lang(update.effective_user)
+    context.user_data['lang'] = lang
+
+    if lang == 'ru':
+        text = "Привет! 👋\nЯ бот DroneWash.md — профессиональная мойка фасадов, высотных зданий и солнечных панелей дронами в Молдове.\n\nЧем могу помочь?"
+        kb = [["Услуги", "Заказать мойку"]]
+    else:
+        text = "Bună! 👋\nSunt botul DroneWash.md — curățare profesională cu drona pentru fațade, clădiri înalte și panouri solare în Moldova.\n\nCu ce te pot ajuta?"
+        kb = [["Servicii", "Solicită ofertă gratuită"]]
+
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+async def services(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = context.user_data.get('lang', 'ro')
+    if lang == 'ru':
+        text = ("Наши услуги:\n\n"
+                "▸ Мойка стеклянных фасадов и окон\n"
+                "▸ Мойка солнечных панелей\n"
+                "▸ Наружная мойка зданий без лесов\n\n"
+                "Цена от 3–8 лей/м²")
+    else:
+        text = ("Serviciile noastre:\n\n"
+                "▸ Curățare fațade de sticlă și geamuri\n"
+                "▸ Spălare panouri solare\n"
+                "▸ Curățare exterioară clădiri fără schele\n\n"
+                "Preț de la 3–8 lei/m²")
+
+    await update.message.reply_text(text, reply_markup=main_menu(lang))
+
+def main_menu(lang):
+    if lang == 'ru':
         return ReplyKeyboardMarkup([["Услуги", "Заказать мойку"]], resize_keyboard=True)
     return ReplyKeyboardMarkup([["Servicii", "Solicită ofertă gratuită"]], resize_keyboard=True)
 
-# Back + Cancel buttons
-def back_kb(lang: str):
-    if 'ru' in lang.lower():
-        return ReplyKeyboardMarkup([["Назад"], ["Отмена"]], resize_keyboard=True)
-    return ReplyKeyboardMarkup([["Înapoi"], ["Anulează"]], resize_keyboard=True)
+async def request_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = context.user_data['lang']
+    text = "Как вас зовут?" if lang == 'ru' else "Cum vă numiți?"
+    kb = [["Anulează" if lang == 'ro' else "Отмена"]]
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    return NAME
 
-# Building types with Back
-def building_kb(lang: str):
-    rows = [
+async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text in ["Anulează", "Отмена"]:
+        return await cancel(update, context)
+    context.user_data['name'] = update.message.text
+    lang = context.user_data['lang']
+    text = "Номер телефона (с +373):" if lang == 'ru' else "Numărul de telefon (cu +373):"
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup([["Anulează" if lang == 'ro' else "Отмена"]], resize_keyboard=True))
+    return PHONE
+
+async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text in ["Anulează", "Отмена"]:
+        return await cancel(update, context)
+    context.user_data['phone'] = update.message.text
+    lang = context.user_data['lang']
+    kb = [
         ["Bloc de locuit / Жилой дом"],
         ["Clădire de birouri / Офис"],
         ["Hotel / Centru comercial"],
         ["Panouri solare / Солнечные панели"],
-        ["Înapoi" if 'ro' in lang.lower() else "Назад"]
+        ["Anulează" if lang == 'ro' else "Отмена"]
     ]
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = (update.effective_user.language_code or 'ro').lower()
-    text = "Привет! 👋\nЯ бот DroneWash.md — профессиональная мойка фасадов, высотных зданий и солнечных панелей дронами в Молдове.\n\nЧем могу помочь?" if 'ru' in lang else "Bună! 👋\nSunt botul DroneWash.md — curățare profesională cu drona pentru fațade, clădiri înalte și panouri solare în Moldova.\n\nCu ce te pot ajuta?"
-    await update.message.reply_text(text, reply_markup=main_menu(lang))
-
-async def services(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = (update.effective_user.language_code or 'ro').lower()
-    text = "Наши услуги:\n\n▸ Мойка стеклянных фасадов и окон\n▸ Мойка солнечных панелей\n▸ Наружная мойка зданий без лесов\n\nЦена от 3–8 лей/м²" if 'ru' in lang else "Serviciile noastre:\n\n▸ Curățare fațade de sticlă și geamuri\n▸ Spălare panouri solare\n▸ Curățare exterioară clădiri fără schele\n\nPreț de la 3–8 lei/m²"
-    await update.message.reply_text(text, reply_markup=main_menu(lang))
-
-async def request_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = (update.effective_user.language_code or 'ro').lower()
-    await update.message.reply_text("Как вас зовут?" if 'ru' in lang else "Cum vă numiți?", reply_markup=back_kb(lang))
-    return NAME
-
-async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text in ["Înapoi", "Назад"]:
-        return await request_quote(update, context)
-    context.user_data['name'] = update.message.text
-    lang = (update.effective_user.language_code or 'ro').lower()
-    await update.message.reply_text("Номер телефона (с +373):" if 'ru' in lang else "Numărul de telefon (cu +373):", reply_markup=back_kb(lang))
-    return PHONE
-
-async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text in ["Înapoi", "Назад"]:
-        return await request_quote(update, context)
-    context.user_data['phone'] = update.message.text
-    lang = (update.effective_user.language_code or 'ro').lower()
-    await update.message.reply_text("Тип объекта:" if 'ru' in lang else "Tipul clădirii:", reply_markup=building_kb(lang))
+    await update.message.reply_text("Tipul clădirii:" if lang == 'ro' else "Тип объекта:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
     return BUILDING
 
 async def get_building(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text in ["Înapoi", "Назад"]:
-        return await get_phone(update, context)
+    if update.message.text in ["Anulează", "Отмена"]:
+        return await cancel(update, context)
     context.user_data['building'] = update.message.text
-    lang = (update.effective_user.language_code or 'ro').lower()
-    await update.message.reply_text("Дополнительно (этажи, площадь, пожелания):" if 'ru' in lang else "Detalii suplimentare (etaje, suprafață, dorințe):", reply_markup=back_kb(lang))
+    lang = context.user_data['lang']
+    text = "Detalii suplimentare (etaje, suprafață, dorințe):" if lang == 'ro' else "Дополнительно (этажи, площадь, пожелания):"
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup([["Anulează" if lang == 'ro' else "Отмена"]], resize_keyboard=True))
     return MESSAGE
 
 async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text in ["Înapoi", "Назад"]:
-        return await get_building(update, context)
+    if update.message.text in ["Anulează", "Отмена"]:
+        return await cancel(update, context)
     context.user_data['message'] = update.message.text
     user = update.effective_user
-    lang = (user.language_code or 'ro').lower()
+    lang = context.user_data['lang']
 
-    # Lead to you — always Romanian
     lead = (
         "NOUĂ CERERE DroneWash.md \n\n"
         f"Nume: {context.user_data['name']}\n"
@@ -91,34 +106,22 @@ async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await context.bot.send_message(chat_id=ADMIN_ID, text=lead)
 
-    # Thank you + clean keyboard
-    await update.message.reply_text(
-        "Спасибо! Мы свяжемся с вами в ближайшие 30 минут! 🚁" if 'ru' in lang else
-        "Mulțumim! Vă contactăm în maxim 30 de minute! 🚁",
-        reply_markup=REMOVE
-    )
-    await update.message.reply_text("Ce mai pot face pentru dvs.?", reply_markup=main_menu(lang))
+    thank = "Mulțumim! Vă contactăm în maxim 30 de minute! 🚁" if lang == 'ro' else "Спасибо! Мы свяжемся с вами в ближайшие 30 минут! 🚁"
+    await update.message.reply_text(thank, reply_markup=REMOVE)
+    await update.message.reply_text("Ce mai pot face pentru dvs.?" if lang == 'ro' else "Что ещё могу сделать для вас?", reply_markup=main_menu(lang))
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = (update.effective_user.language_code or 'ro').lower()
-    await update.message.reply_text("Cererea a fost anulată." if 'ro' in lang else "Заявка отменена.", reply_markup=main_menu(lang))
+    lang = context.user_data.get('lang', 'ro')
+    text = "Cererea a fost anulată." if lang == 'ro' else "Заявка отменена."
+    await update.message.reply_text(text, reply_markup=main_menu(lang))
     return ConversationHandler.END
 
-# Tiny Flask server so Render doesn't complain about ports
-app = Flask(__name__)
-@app.route('/')
-def home():
-    return "DroneWash.md bot is alive!", 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
-
 def main():
-    application = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Regex("^(Servicii|Услуги)$"), services))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^(Servicii|Услуги)$"), services))
 
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^(Solicită ofertă gratuită|Заказать мойку)$"), request_quote)],
@@ -128,15 +131,12 @@ def main():
             BUILDING: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_building)],
             MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex("^(Anulează|Отмена)$"), cancel),
-        ],
+        fallbacks=[MessageHandler(filters.Regex("^(Anulează|Отмена)$"), cancel)],
     )
-    application.add_handler(conv)
+    app.add_handler(conv)
 
-    print("DroneWash.md bot is running...")
-    application.run_polling()
+    print("DroneWash.md bot is running as Background Worker...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()  # keeps Render happy
     main()
